@@ -1,0 +1,25 @@
+## Background
+
+{% include "_training_constraints.j2" %}
+
+This is the foundation issue. Subsequent perf, feature, and bug issues filed by the perf evaluator and judge will refine this implementation over time.
+
+## Acceptance criteria
+
+- `train.py` exists in the workspace and exports a `VibeTrainModel` class with the `from_config` / `train` interface described above.
+- The model architecture implements every layer explicitly in workspace code (attention with GQA, SwiGLU MLP, RMSNorm, Llama3-scaled RoPE) — no importing `LlamaModel` or `LlamaAttention` from transformers.
+- FSDP wrapping is applied at the `TransformerBlock` level with `FULL_SHARD`, `MixedPrecision(param_dtype=BF16, reduce_dtype=FP32)`, and `use_orig_params=True`.
+- Selective activation checkpointing is applied to attention layers using `use_reentrant=False`.
+- AdamW optimizer is configured with `fused=True` (FSDP1) or `foreach=True` (FSDP2).
+- Training runs without OOM on 8×H100 with local_batch_size=2, seq_len=4096.
+{% if acc_checker_path %}
+- The accuracy checker at `{{ acc_checker_path }}` passes: `python checker.py --ref /tmp/ref_grads.pt --candidate /tmp/cand_grads.pt` exits 0.
+{% endif %}
+{% if bench_path %}
+- The benchmark at `{{ bench_path }}` reports `tokens_per_sec > 0`.
+{% endif %}
+- The project is initialized with `uv init`, dependencies added via `uv add`, and scripts run through `uv run`.
+
+## Notes
+
+This is the initial bootstrap issue auto-created by the train loop on the first iteration. Resolving it brings the workspace to "minimum viable training"; performance optimizations and bug fixes will follow as separate issues filed by the perf evaluator and judge.

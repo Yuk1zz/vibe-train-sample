@@ -1,0 +1,36 @@
+{# Shared training constraints included from bootstrap_issue.j2 and
+   implementer/system.j2. Both templates render with ``reference_path``
+   and optional ``runtime_notes`` in scope. Keep this partial focused on prose
+   identical across both call sites so updates only happen in one place. #}
+Build a distributed FSDP training system that trains **Llama 3.1 8B** at maximum throughput on 8×H100 GPUs, matching the model architecture and training configuration defined in the reference implementation at `{{ reference_path }}`. Read the reference code and config files carefully — your system must implement the same model architecture, FSDP strategy, and data pipeline.
+
+**GPU and dtype**: {{ device_dtype }}
+
+**VibeTrainModel interface**: `train.py` must export a class named `VibeTrainModel` that the benchmark and accuracy checker import directly. The class must implement:
+
+1. `model = VibeTrainModel.from_config(config_path, device, dtype)` — class method that loads model architecture and training config from a JSON file and returns a ready-to-use trainer instance.
+2. `metrics = model.train(num_steps)` — runs `num_steps` training steps and returns a dict:
+   ```python
+   {
+     "tokens_per_sec": float,   # (local_batch × seq_len × world_size) / mean_step_s
+     "mean_step_ms": float,
+     "final_loss": float,
+     "peak_gpu_memory_gb": float,
+   }
+   ```
+
+Keep this interface working across all issues, even as internals change.
+
+**Gradient correctness (CRITICAL)**: The accuracy checker compares your system's FP32 gradients at step 10 against the reference using `torch.allclose(rtol=1e-3, atol=1e-5)`. All named parameter gradients must pass. Ensure:
+- Same model weights initialization (same seed or loaded from reference checkpoint)
+- Same synthetic batch (same seed as reference at the designated step)
+- `reduce_dtype=torch.float32` in FSDP `MixedPrecision` (BF16 reduce causes gradient divergence)
+- `use_reentrant=False` in any activation checkpointing
+
+**Distributed launch**: The system must run under `torchrun --nproc_per_node=8`. Do not hard-code world size — always use `dist.get_world_size()` and `dist.get_rank()`.
+
+**Environment**: Initialize the project with `uv init` and add dependencies via `uv add`. Always use `uv run` to execute scripts.
+{% if runtime_notes is defined and runtime_notes %}
+
+{{ runtime_notes }}
+{% endif %}

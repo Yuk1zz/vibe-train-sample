@@ -1,0 +1,179 @@
+"""Tests for the train-loop CLI parser and main()."""
+
+from unittest.mock import patch
+
+import pytest
+
+from vibe_train.__main__ import _build_parser, main
+from vibe_train.loop import TrainLoopState
+
+
+class TestBuildParser:
+    def test_default_max_rounds(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.max_rounds == 5
+
+    def test_default_max_attempts_per_issue(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.max_attempts_per_issue == 3
+
+    def test_default_max_issues_per_perf_eval(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.max_issues_per_perf_eval == 3
+
+    def test_default_resume_is_none(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.resume is None
+
+    def test_resume_without_value_defaults_to_latest(self):
+        parser = _build_parser()
+        args = parser.parse_args(["--resume"])
+        assert args.resume == "latest"
+
+    def test_resume_with_explicit_dir(self):
+        parser = _build_parser()
+        args = parser.parse_args(["--resume", "20260408-090000-train"])
+        assert args.resume == "20260408-090000-train"
+
+    def test_overrides_for_rounds(self):
+        parser = _build_parser()
+        args = parser.parse_args(
+            ["--max-rounds", "10",
+             "--max-attempts-per-issue", "5",
+             "--max-issues-per-perf-eval", "2"]
+        )
+        assert args.max_rounds == 10
+        assert args.max_attempts_per_issue == 5
+        assert args.max_issues_per_perf_eval == 2
+
+    def test_default_exp_name(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.exp_name == "train-test"
+
+    def test_default_modal_app(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.modal_app == "vibetrain"
+
+    def test_default_ref_path_is_training_example(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert "Llama-3.1-8B-Training" in args.ref
+        assert "reference" in args.ref
+
+    def test_common_args_present(self):
+        parser = _build_parser()
+        args = parser.parse_args(["--exp-name", "myexp"])
+        assert args.exp_name == "myexp"
+        assert hasattr(args, "ref")
+        assert hasattr(args, "docker")
+        assert hasattr(args, "debug")
+        assert hasattr(args, "acc_checker")
+        assert hasattr(args, "bench")
+
+
+class TestMain:
+    def _patch_run(self, return_value: bool):
+        return patch(
+            "vibe_train.__main__.run_train_loop",
+            return_value=return_value,
+        )
+
+    def _patch_config(self):
+        from vibe_train.constants import DEFAULT_COMPUTE_BACKEND
+
+        return patch(
+            "vibe_train.__main__.load_config_and_skills",
+            return_value=(
+                {"model": {"name": "claude-sonnet-4-6"}},
+                None,
+                DEFAULT_COMPUTE_BACKEND,
+            ),
+        )
+
+    def test_main_exits_zero_on_success(self):
+        with self._patch_config(), self._patch_run(True):
+            main([])
+
+    def test_main_exits_one_on_failure(self):
+        with self._patch_config(), self._patch_run(False):
+            with pytest.raises(SystemExit) as exc_info:
+                main([])
+            assert exc_info.value.code == 1
+
+    def test_main_passes_round_args_to_run_loop(self):
+        with self._patch_config(), patch(
+            "vibe_train.__main__.run_train_loop",
+            return_value=True,
+        ) as mock_run:
+            main([
+                "--max-rounds", "7",
+                "--max-attempts-per-issue", "4",
+                "--max-issues-per-perf-eval", "2",
+            ])
+            kwargs = mock_run.call_args.kwargs
+            assert kwargs["max_rounds"] == 7
+            assert kwargs["max_attempts_per_issue"] == 4
+            assert kwargs["max_issues_per_perf_eval"] == 2
+
+    def test_main_start_round_overrides_loaded_state(self, tmp_path):
+        with self._patch_config(), patch(
+            "vibe_train.__main__._resolve_run_dir",
+            return_value="fake-run-dir",
+        ), patch(
+            "vibe_train.__main__.run_train_loop",
+            return_value=True,
+        ) as mock_run:
+            main(["--resume", "fake-run-dir", "--start-round", "3"])
+            kwargs = mock_run.call_args.kwargs
+            assert kwargs["existing"] is True
+            state = kwargs["resume_state"]
+            assert isinstance(state, TrainLoopState)
+            assert state.round_idx == 2  # 0-indexed
+            assert state.bootstrap_done is True
+
+    def test_main_forwards_agent_backend_and_cli_provider(self):
+        with self._patch_config(), patch(
+            "vibe_train.__main__.run_train_loop",
+            return_value=True,
+        ) as mock_run:
+            main(["--agent-backend", "cli", "--cli-provider", "claude"])
+            kwargs = mock_run.call_args.kwargs
+            assert kwargs["agent_backend"] == "cli"
+            assert kwargs["cli_provider"] == "claude"
+
+    def test_main_defaults_agent_backend_and_cli_provider_to_none(self):
+        with self._patch_config(), patch(
+            "vibe_train.__main__.run_train_loop",
+            return_value=True,
+        ) as mock_run:
+            main([])
+            kwargs = mock_run.call_args.kwargs
+            assert kwargs["agent_backend"] is None
+            assert kwargs["cli_provider"] is None
+
+    @pytest.mark.parametrize(
+        "provider", ["claude", "gemini", "codex", "opencode"]
+    )
+    def test_main_accepts_all_cli_providers(self, provider):
+        """All four CLI providers must reach run_train_loop without raising."""
+        with self._patch_config(), patch(
+            "vibe_train.__main__.run_train_loop",
+            return_value=True,
+        ) as mock_run:
+            main(["--agent-backend", "cli", "--cli-provider", provider])
+            kwargs = mock_run.call_args.kwargs
+            assert kwargs["agent_backend"] == "cli"
+            assert kwargs["cli_provider"] == provider
+
+    def test_main_modal_nsys_conflict_exits(self):
+        """--modal + --profiler=nsys is an invalid combination."""
+        with self._patch_config():
+            with pytest.raises(SystemExit) as exc_info:
+                main(["--modal", "--profiler", "nsys"])
+            assert exc_info.value.code == 2

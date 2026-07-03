@@ -1,0 +1,15 @@
+{
+  "model_id": "meta-llama/Llama-3.1-8B",
+  "revision": "main",
+  "task": "pretraining",
+  "reference_system": "TorchTitan-style FSDP trainer",
+  "hardware": "8xH100/H200",
+  "parallelism": "FSDP1",
+  "dataset": "fineweb (tokenized)",
+  "seq_len": 4096,
+  "local_batch_size": 2,
+  "global_batch_size": 16,
+  "tokens_per_update": 65536,
+  "dtype": "bfloat16",
+  "grad_checkpoint": "selective"
+}
