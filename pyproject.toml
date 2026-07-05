@@ -26,16 +26,24 @@ dependencies = [
     "modal>=1.4.2",
 ]
 
+[project.optional-dependencies]
+train = [
+    "torchtitan>=0.2.2",
+]
+
 [project.scripts]
 vibe-serve = "vibe_serve.cli:main"
 vibe-serve-issue-mcp = "vibe_serve.loops.plain.mcp_server:main"
+vibe-train = "vibe_train.__main__:main"
+vibe-train-mcp = "vibe_train.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["vibe_serve*"]
+include = ["vibe_serve*", "vibe_train*"]
 
 [tool.setuptools.package-data]
 vibe_serve = ["templates/*.j2", "loops/agent/templates/*.j2", "loops/agent/templates/_modality/*/*.j2", "loops/evolve/templates/*.j2", "loops/plain/templates/*.j2", "loops/plain/templates/*/*.j2"]
+vibe_train = ["templates/*.j2", "templates/_backend/*/*.j2", "templates/implementer/*.j2", "templates/judge/*.j2", "templates/perf_eval/*.j2"]
 
 [dependency-groups]
 dev = [
