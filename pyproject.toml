@@ -50,9 +50,11 @@ dev = [
     "matplotlib>=3.10.8",
     "pytest",
     "ruff>=0.6",
+    "torch",
 ]
 test = [
     "pytest",
+    "torch",
 ]
 
 [tool.pytest.ini_options]

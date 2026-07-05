@@ -149,7 +149,6 @@ class TestReferenceStructure:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-@_requires_torch
 def ref_module():
     """Load reference.py with torchtitan imports stubbed.
 
@@ -157,6 +156,7 @@ def ref_module():
     functions (make_batch, TrainingConfig, _make_model_args) be tested locally
     without a GPU or a matching PyTorch version.
     """
+    pytest.importorskip("torch")
     tt_subpaths = [
         "torchtitan",
         "torchtitan.models",
