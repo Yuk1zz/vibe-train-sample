@@ -14,7 +14,15 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import torch
+
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    torch = None  # type: ignore[assignment]
+    HAS_TORCH = False
+
+_requires_torch = pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
 
 BUNDLE = Path("examples/Llama-3.1-8B-Training")
 REF_DIR = BUNDLE / "reference"
@@ -141,6 +149,7 @@ class TestReferenceStructure:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
+@_requires_torch
 def ref_module():
     """Load reference.py with torchtitan imports stubbed.
 
@@ -182,6 +191,7 @@ def ref_module():
         sys.modules.pop(path, None)
 
 
+@_requires_torch
 class TestMakeBatch:
     def test_output_shape(self, ref_module):
         inp, tgt = ref_module.make_batch(2, 16, 128256, 42, 1, 0)
@@ -218,6 +228,7 @@ class TestMakeBatch:
         assert int(tgt.min()) >= 0 and int(tgt.max()) < 128256
 
 
+@_requires_torch
 class TestTrainingConfig:
     def test_from_json_parses_seq_len_and_batch_size(self, ref_module):
         cfg = ref_module.TrainingConfig.from_json(REF_DIR / "config.json")
@@ -241,6 +252,7 @@ class TestTrainingConfig:
         assert cfg.seed == 42              # default
 
 
+@_requires_torch
 class TestMakeModelArgs:
     """Verify _make_model_args passes the correct Llama 3.1 8B values to TorchTitan."""
 
