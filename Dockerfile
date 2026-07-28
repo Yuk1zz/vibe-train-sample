@@ -20,17 +20,17 @@ ENV PATH="/root/.local/bin:$PATH"
 
 # ── Python deps ────────────────────────────────────────────────────────────
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
-# Sync without torch (already provided by the NGC base image)
-RUN uv sync --frozen --no-dev \
-    && uv pip install -e ".[train]" --no-build-isolation
+# Copy manifests first so dep installation is cached separately from source.
+# README.md is required by setuptools to build the package metadata.
+COPY pyproject.toml uv.lock README.md ./
+# Install all non-dev dependencies (torch comes from the NGC base, not uv).
+RUN uv sync --frozen --no-dev --no-install-project --extra train
 
 # ── project source ─────────────────────────────────────────────────────────
 COPY src/ src/
 COPY examples/ examples/
-
-# Reinstall in editable mode so entry points resolve correctly
-RUN uv pip install -e ".[train]" --no-build-isolation
+# Now install the project itself (fast — deps are already cached above).
+RUN uv sync --frozen --no-dev --extra train
 
 # ── runtime ────────────────────────────────────────────────────────────────
 # Credentials and workspace are supplied at runtime via env vars / mounts.
