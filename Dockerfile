@@ -19,7 +19,7 @@ RUN curl -Ls https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local sh
 ENV PATH="/usr/local/bin:$PATH"
 
 # ── non-root user (Claude Code CLI refuses to run as root) ─────────────────
-RUN useradd -m -u 1000 vibe
+RUN useradd -m vibe
 
 # ── Python deps ────────────────────────────────────────────────────────────
 WORKDIR /app
