@@ -2,7 +2,8 @@
    implementer/system.j2. Both templates render with ``reference_path``
    and optional ``runtime_notes`` in scope. Keep this partial focused on prose
    identical across both call sites so updates only happen in one place. #}
-Build a distributed FSDP training system that trains **Llama 3.1 8B** at maximum throughput on 8×H100 GPUs, matching the model architecture and training configuration defined in the reference implementation at `{{ reference_path }}`. Read the reference code and config files carefully — your system must implement the same model architecture, FSDP strategy, and data pipeline.
+{% from '_config.j2' import model_name, num_gpus, gpu_type %}
+Build a distributed FSDP training system that trains **{{ model_name() }}** at maximum throughput on {{ num_gpus() }}×{{ gpu_type() }} GPUs, matching the model architecture and training configuration defined in the reference implementation at `{{ reference_path }}`. Read the reference code and config files carefully — your system must implement the same model architecture, FSDP strategy, and data pipeline.
 
 **GPU and dtype**: {{ device_dtype }}
 

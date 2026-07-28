@@ -1,0 +1,13 @@
+{# Hardware and model configuration for vibe-train.
+   Edit the macros below to retarget a different GPU or model. #}
+
+{% macro model_name() %}Llama 3.1 8B{% endmacro %}
+{% macro num_gpus() %}8{% endmacro %}
+{% macro gpu_type() %}H200{% endmacro %}
+
+{# Reference throughput baselines (tok/sec).
+   Default values are TorchTitan H100 numbers. Update after running your
+   first baseline on the target hardware. #}
+{% macro ref_fsdp_tok_sec() %}6258{% endmacro %}
+{% macro ref_compile_tok_sec() %}6674{% endmacro %}
+{% macro ref_fp8_tok_sec() %}9409{% endmacro %}

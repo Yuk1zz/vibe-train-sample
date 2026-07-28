@@ -1,3 +1,4 @@
+{% from '_config.j2' import num_gpus, gpu_type %}
 ## Background
 
 {% include "_training_constraints.j2" %}
@@ -11,7 +12,7 @@ This is the foundation issue. Subsequent perf, feature, and bug issues filed by 
 - FSDP wrapping is applied at the `TransformerBlock` level with `FULL_SHARD`, `MixedPrecision(param_dtype=BF16, reduce_dtype=FP32)`, and `use_orig_params=True`.
 - Selective activation checkpointing is applied to attention layers using `use_reentrant=False`.
 - AdamW optimizer is configured with `fused=True` (FSDP1) or `foreach=True` (FSDP2).
-- Training runs without OOM on 8×H100 with local_batch_size=2, seq_len=4096.
+- Training runs without OOM on {{ num_gpus() }}×{{ gpu_type() }} with local_batch_size=2, seq_len=4096.
 {% if acc_checker_path %}
 - The accuracy checker at `{{ acc_checker_path }}` passes: `python checker.py --ref /tmp/ref_grads.pt --candidate /tmp/cand_grads.pt` exits 0.
 {% endif %}

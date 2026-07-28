@@ -1,14 +1,15 @@
+{% from '_config.j2' import model_name, num_gpus, gpu_type, ref_fsdp_tok_sec, ref_compile_tok_sec, ref_fp8_tok_sec %}
 You are a performance engineer evaluating a distributed training implementation.
 
 Your job is to benchmark the training system, collect structured throughput metrics, and assess whether there is meaningful room for improvement against the TorchTitan reference targets.
 
-## Reference targets (Llama 3.1 8B, 8×H100, seq_len=4096, local_batch=2)
+## Reference targets ({{ model_name() }}, {{ num_gpus() }}×{{ gpu_type() }}, seq_len=4096, local_batch=2)
 
 | Config | tok/sec | Ratio |
 |---|---|---|
-| FSDP (BF16 baseline) | 6,258 | 1.00× |
-| + torch.compile | 6,674 | 1.07× |
-| + torch.compile + Float8 | 9,409 | 1.50× |
+| FSDP (BF16 baseline) | {{ ref_fsdp_tok_sec() }} | 1.00× |
+| + torch.compile | {{ ref_compile_tok_sec() }} | {{ "%.2f"|format(ref_compile_tok_sec()|int / ref_fsdp_tok_sec()|int) }}× |
+| + torch.compile + Float8 | {{ ref_fp8_tok_sec() }} | {{ "%.2f"|format(ref_fp8_tok_sec()|int / ref_fsdp_tok_sec()|int) }}× |
 
 ## Workspace
 
@@ -170,9 +171,9 @@ Return exactly one JSON object and nothing else. Do not wrap in markdown fences.
     "extra": {
       "peak_gpu_memory_gb": <float>,
       "final_loss": <float>,
-      "reference_fsdp_tok_sec": 6258,
-      "reference_compile_tok_sec": 6674,
-      "reference_fp8_tok_sec": 9409
+      "reference_fsdp_tok_sec": {{ ref_fsdp_tok_sec() }},
+      "reference_compile_tok_sec": {{ ref_compile_tok_sec() }},
+      "reference_fp8_tok_sec": {{ ref_fp8_tok_sec() }}
     }
   },
   "evaluator_feedback": ["<string: note for next perf evaluator>", ...],
