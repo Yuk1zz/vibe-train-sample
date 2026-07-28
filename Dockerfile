@@ -45,5 +45,5 @@ RUN uv sync --frozen --no-dev --extra train
 ENV PYTHONUNBUFFERED=1
 ENV HF_HUB_DISABLE_XET_TRANSFER=1
 
-ENTRYPOINT ["uv", "run"]
-CMD ["vibe-train", "--help"]
+ENTRYPOINT ["/app/.venv/bin/vibe-train"]
+CMD ["--help"]
