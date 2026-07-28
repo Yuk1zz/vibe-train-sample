@@ -19,7 +19,12 @@ RUN curl -Ls https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local sh
 ENV PATH="/usr/local/bin:$PATH"
 
 # ── non-root user (Claude Code CLI refuses to run as root) ─────────────────
-RUN useradd -m vibe
+# Pass host UID/GID at build time so mounted volumes are writable without
+# needing --user at runtime:
+#   docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t vibe-train .
+ARG UID=1001
+ARG GID=1001
+RUN groupadd -g $GID vibe && useradd -m -u $UID -g $GID vibe
 
 # ── Python deps ────────────────────────────────────────────────────────────
 WORKDIR /app
