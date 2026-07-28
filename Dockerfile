@@ -14,9 +14,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code
 
-# ── uv ─────────────────────────────────────────────────────────────────────
-RUN curl -Ls https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+# ── uv (system-wide so the non-root user can reach it) ─────────────────────
+RUN curl -Ls https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local sh
+ENV PATH="/usr/local/bin:$PATH"
+
+# ── non-root user (Claude Code CLI refuses to run as root) ─────────────────
+RUN useradd -m -u 1000 vibe
 
 # ── Python deps ────────────────────────────────────────────────────────────
 WORKDIR /app
@@ -33,14 +36,20 @@ COPY resources/ resources/
 # Now install the project itself (fast — deps are already cached above).
 RUN uv sync --frozen --no-dev --extra train
 
+# Hand /app to the non-root user so vibe-train can write exp_env/, logs, etc.
+RUN chown -R vibe:vibe /app
+
+USER vibe
+
 # ── runtime ────────────────────────────────────────────────────────────────
 # Credentials and workspace are supplied at runtime via env vars / mounts.
 # Example:
 #   docker run --gpus all \
-#     -v $(pwd)/examples:/app/examples \
+#     -v /path/to/weights:/app/examples/Llama-3.1-8B-Training/reference/model:ro \
+#     -v $(pwd)/resources:/app/resources \
 #     -v $(pwd)/exp_env:/app/exp_env \
 #     --env-file .env \
-#     vibe-train vibe-train --exp-name run-001
+#     vibe-train --exp-name run-001
 
 ENV PYTHONUNBUFFERED=1
 ENV HF_HUB_DISABLE_XET_TRANSFER=1
