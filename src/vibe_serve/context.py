@@ -171,6 +171,7 @@ class _RunContext:
         self.EXCLUDED_WORKSPACE_DIRS = {
             ".claude", "__pycache__", ".git", "repos",
             "_auth", "_opt_vibeserve", "_mounts", ".cache",
+            "model",  # model weights directory — too large to git-track
         }
         self.debug = debug
         self.git_tracking = git_tracking
