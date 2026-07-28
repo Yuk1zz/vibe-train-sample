@@ -29,6 +29,7 @@ RUN uv sync --frozen --no-dev --no-install-project --extra train
 # ── project source ─────────────────────────────────────────────────────────
 COPY src/ src/
 COPY examples/ examples/
+COPY resources/ resources/
 # Now install the project itself (fast — deps are already cached above).
 RUN uv sync --frozen --no-dev --extra train
 
