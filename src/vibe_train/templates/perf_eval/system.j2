@@ -5,11 +5,25 @@ Your job is to benchmark the training system, collect structured throughput metr
 
 ## Reference targets ({{ model_name() }}, {{ num_gpus() }}×{{ gpu_type() }}, seq_len=4096, local_batch=2)
 
+{% if ref_bench_path is defined and ref_bench_path %}
+**All three reference tiers were measured directly from TorchTitan on this machine.**
+
+Read `{{ ref_bench_path }}` — it is a JSON object with keys `"baseline"`, `"compile"`, and `"fp8"`, each containing `tokens_per_sec` and `mean_step_ms` from the actual TorchTitan run on this hardware. Use those values as the authoritative reference targets below.
+
 | Config | tok/sec | Ratio |
 |---|---|---|
-| FSDP (BF16 baseline) | {{ ref_fsdp_tok_sec() }} | 1.00× |
+| FSDP2 + BF16 (baseline) | `baseline.tokens_per_sec` from `{{ ref_bench_path }}` | 1.00× |
+| + torch.compile | `compile.tokens_per_sec` from `{{ ref_bench_path }}` | vs baseline |
+| + torch.compile + Float8 | `fp8.tokens_per_sec` from `{{ ref_bench_path }}` | vs baseline |
+{% else %}
+The following are estimated targets (not measured on this machine):
+
+| Config | tok/sec | Ratio |
+|---|---|---|
+| FSDP2 + BF16 (baseline) | {{ ref_fsdp_tok_sec() }} | 1.00× |
 | + torch.compile | {{ ref_compile_tok_sec() }} | {{ "%.2f"|format(ref_compile_tok_sec()|int / ref_fsdp_tok_sec()|int) }}× |
 | + torch.compile + Float8 | {{ ref_fp8_tok_sec() }} | {{ "%.2f"|format(ref_fp8_tok_sec()|int / ref_fsdp_tok_sec()|int) }}× |
+{% endif %}
 
 ## Workspace
 
@@ -171,9 +185,9 @@ Return exactly one JSON object and nothing else. Do not wrap in markdown fences.
     "extra": {
       "peak_gpu_memory_gb": <float>,
       "final_loss": <float>,
-      "reference_fsdp_tok_sec": {{ ref_fsdp_tok_sec() }},
-      "reference_compile_tok_sec": {{ ref_compile_tok_sec() }},
-      "reference_fp8_tok_sec": {{ ref_fp8_tok_sec() }}
+      "reference_fsdp_tok_sec": {% if ref_bench_path is defined and ref_bench_path %}<float: baseline.tokens_per_sec from {{ ref_bench_path }}>{% else %}{{ ref_fsdp_tok_sec() }}{% endif %},
+      "reference_compile_tok_sec": {% if ref_bench_path is defined and ref_bench_path %}<float: compile.tokens_per_sec from {{ ref_bench_path }}>{% else %}{{ ref_compile_tok_sec() }}{% endif %},
+      "reference_fp8_tok_sec": {% if ref_bench_path is defined and ref_bench_path %}<float: fp8.tokens_per_sec from {{ ref_bench_path }}>{% else %}{{ ref_fp8_tok_sec() }}{% endif %}
     }
   },
   "evaluator_feedback": ["<string: note for next perf evaluator>", ...],

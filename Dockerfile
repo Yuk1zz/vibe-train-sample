@@ -15,8 +15,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code
 
 # ── uv (system-wide so the non-root user can reach it) ─────────────────────
-RUN curl -Ls https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local sh
-ENV PATH="/usr/local/bin:$PATH"
+RUN curl -Ls https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
+    && uv --version
 
 # ── non-root user (Claude Code CLI refuses to run as root) ─────────────────
 # Pass host UID/GID at build time so mounted volumes are writable without
@@ -26,25 +26,26 @@ ARG UID=1001
 ARG GID=1001
 RUN groupadd -g $GID vibe && useradd -m -u $UID -g $GID vibe
 
-# ── Python deps ────────────────────────────────────────────────────────────
+# ── Python deps (run as vibe so .venv is owned correctly — no chown -R) ────
 WORKDIR /app
-# Copy manifests first so dep installation is cached separately from source.
+RUN chown vibe:vibe /app
+
+# Copy manifests with correct ownership so uv can write the lockfile if needed.
 # README.md is required by setuptools to build the package metadata.
-COPY pyproject.toml uv.lock README.md ./
+COPY --chown=vibe:vibe pyproject.toml uv.lock README.md ./
+
+USER vibe
+
 # Install all non-dev dependencies (torch comes from the NGC base, not uv).
 RUN uv sync --frozen --no-dev --no-install-project --extra train
 
 # ── project source ─────────────────────────────────────────────────────────
-COPY src/ src/
-COPY examples/ examples/
-COPY resources/ resources/
-# Now install the project itself (fast — deps are already cached above).
+COPY --chown=vibe:vibe src/ src/
+COPY --chown=vibe:vibe examples/ examples/
+COPY --chown=vibe:vibe resources/ resources/
+
+# Install the project itself (fast — deps are already cached above).
 RUN uv sync --frozen --no-dev --extra train
-
-# Hand /app to the non-root user so vibe-train can write exp_env/, logs, etc.
-RUN chown -R vibe:vibe /app
-
-USER vibe
 
 # ── runtime ────────────────────────────────────────────────────────────────
 # Credentials and workspace are supplied at runtime via env vars / mounts.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -55,6 +56,75 @@ from vibe_serve.sandbox.run_environment import (
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _STATE_VERSION = 1
+
+
+def _run_reference_once(
+    workspace: Path,
+    lprint,
+    *,
+    nproc: int = 8,
+    grad_step: int = 10,
+) -> tuple[Path | None, Path | None]:
+    """Run TorchTitan reference at startup for all three benchmark tiers.
+
+    Produces:
+      ref_grads.pt      — pre-optimizer gradients at step grad_step (baseline mode)
+      ref_bench.json    — throughput dict with keys "baseline", "compile", "fp8"
+
+    Skipped on resume if both output files already exist. Returns (grads_path, bench_path).
+    """
+    ref_script = workspace / "reference" / "reference.py"
+    grads_path = workspace / "ref_grads.pt"
+    bench_path = workspace / "ref_bench.json"
+
+    if grads_path.exists() and bench_path.exists():
+        lprint("[reference] using cached ref_grads.pt and ref_bench.json")
+        return grads_path, bench_path
+
+    if not ref_script.exists():
+        lprint(f"[reference] reference script not found at {ref_script}, skipping")
+        return None, None
+
+    # (steps, warmup) per tier: compile/fp8 need extra warmup for JIT compilation
+    tiers = [
+        ("baseline", 35,  5),
+        ("compile",  50, 20),
+        ("fp8",      50, 20),
+    ]
+
+    bench_results: dict = {}
+    for mode, steps, warmup in tiers:
+        tmp_json = workspace / f"ref_bench_{mode}.json"
+        cmd = [
+            "torchrun", f"--nproc_per_node={nproc}",
+            str(ref_script),
+            "--mode", mode,
+            "--steps", str(steps),
+            "--warmup", str(warmup),
+            "--grad-step", str(grad_step),
+            "--output-json", str(tmp_json),
+        ]
+        if mode == "baseline":
+            cmd += ["--save-grads", str(grads_path)]
+
+        lprint(f"[reference] running {mode} tier ({steps} steps, {nproc} GPUs)…")
+        result = subprocess.run(cmd, cwd=str(workspace / "reference"))
+        if result.returncode != 0:
+            lprint(f"[reference] WARNING: {mode} run exited with code {result.returncode}")
+        elif tmp_json.exists():
+            try:
+                bench_results[mode] = json.loads(tmp_json.read_text())
+            except Exception as exc:
+                lprint(f"[reference] WARNING: could not parse {tmp_json}: {exc}")
+
+    if bench_results:
+        bench_path.write_text(json.dumps(bench_results, indent=2))
+        lprint(f"[reference] saved ref_bench.json with tiers: {list(bench_results)}")
+
+    return (
+        grads_path if grads_path.exists() else None,
+        bench_path if bench_path.exists() else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +530,11 @@ def run_train_loop(
                     f"issue(s) for retry: {ids}"
                 )
 
+        # Run TorchTitan reference once to generate gradient + benchmark baseline.
+        _ref_grads_path, _ref_bench_path = _run_reference_once(
+            ctx.workspace, ctx.lprint,
+        )
+
         # Determine where to resume from
         i, next_phase, pending_issue_id = _determine_resume_point(state, store)
         end_iteration = i + max_rounds
@@ -598,6 +673,7 @@ def run_train_loop(
                     "judge/system.j2",
                     accuracy_checker_path=ctx.judge_acc_checker_path,
                     bench_path=ctx.judge_bench_path,
+                    ref_grads_path=str(_ref_grads_path) if _ref_grads_path else None,
                     issue=issue,
                 )
                 judge_prompt = prompt.render("judge/user.j2", issue=issue)
@@ -711,6 +787,7 @@ def run_train_loop(
                 previous_evaluator_feedback=previous_evaluator_feedback,
                 issue_create_cap=max_issues_per_perf_eval,
                 runtime_notes=ctx.run_environment_view.prompt_notes,
+                ref_bench_path=str(_ref_bench_path) if _ref_bench_path else None,
             )
             perf_prompt = prompt.render("perf_eval/user.j2")
 

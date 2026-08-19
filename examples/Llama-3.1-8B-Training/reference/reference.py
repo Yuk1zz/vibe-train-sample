@@ -1,18 +1,18 @@
 """
 TorchTitan reference trainer for Llama 3.1 8B.
 
-Uses TorchTitan's Transformer model directly (torchtitan.models.llama3) rather than
-reimplementing it. This guarantees the reference and the candidate are compared against
-the real TorchTitan architecture, not a hand-rolled approximation.
+Uses TorchTitan's full training infrastructure directly — same model, same
+parallelization stack (FSDP2, torch.compile, Float8) as the TorchTitan paper.
 
-Requirements:
-    pip install torchtitan          # requires PyTorch >= 2.5
+Three benchmark tiers:
+  --mode baseline  : FSDP2 + BF16 + selective activation checkpointing
+  --mode compile   : baseline + torch.compile (per-TransformerBlock)
+  --mode fp8       : compile  + Float8 linear layers (via torchao)
 
 Run with:
-    torchrun --nproc_per_node=8 reference.py [--steps N] [--save-grads PATH] [--grad-step K]
-
-The script saves accumulated pre-optimizer gradients at step --grad-step to --save-grads
-for use by the accuracy checker.
+    torchrun --nproc_per_node=8 reference.py --mode baseline --steps 35 --warmup 5
+    torchrun --nproc_per_node=8 reference.py --mode compile  --steps 50 --warmup 20
+    torchrun --nproc_per_node=8 reference.py --mode fp8      --steps 50 --warmup 20
 
 Interface (importable):
     from reference import TrainingConfig, make_batch
@@ -31,16 +31,19 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-    ShardingStrategy,
-)
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-import functools
 
-from torchtitan.models.llama3.model.model import Transformer, TransformerBlock
+# TorchTitan model
+from torchtitan.models.llama3.model.model import Transformer
 from torchtitan.models.llama3.model.args import TransformerModelArgs, RoPEScalingArgs
+
+# TorchTitan parallelization infrastructure
+from torchtitan.models.llama3.infra.parallelize import apply_fsdp, apply_compile
+from torchtitan.distributed import ParallelDims
+from torchtitan.distributed.activation_checkpoint import apply_ac
+from torchtitan.config.job_config import (
+    ActivationCheckpoint as ACConfig,
+    Compile as CompileConfig,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +70,7 @@ class TrainingConfig:
 
 
 def _make_model_args(seq_len: int) -> TransformerModelArgs:
-    """TorchTitan TransformerModelArgs for Llama 3.1 8B (matches torchtitan llama3_1_8b config)."""
+    """TorchTitan TransformerModelArgs for Llama 3.1 8B."""
     return TransformerModelArgs(
         dim=4096,
         n_layers=32,
@@ -105,42 +108,30 @@ def make_batch(
 
 
 # ---------------------------------------------------------------------------
-# FSDP wrapping
+# Gradient capture (FSDP2 / DTensor-aware)
 # ---------------------------------------------------------------------------
 
-def wrap_fsdp(model: Transformer, device: torch.device) -> FSDP:
-    mp = MixedPrecision(
-        param_dtype=torch.bfloat16,
-        reduce_dtype=torch.float32,
-        buffer_dtype=torch.bfloat16,
-    )
-    auto_wrap = functools.partial(
-        transformer_auto_wrap_policy,
-        transformer_layer_cls={TransformerBlock},
-    )
-    return FSDP(
-        model,
-        auto_wrap_policy=auto_wrap,
-        mixed_precision=mp,
-        sharding_strategy=ShardingStrategy.FULL_SHARD,
-        device_id=device,
-        use_orig_params=True,
-    )
+def _save_gradients(model: torch.nn.Module, path: str, rank: int) -> None:
+    """Gather sharded FSDP2 gradients to rank 0 and save."""
+    from torch.distributed.tensor import Replicate
 
-
-# ---------------------------------------------------------------------------
-# Gradient capture
-# ---------------------------------------------------------------------------
-
-def _save_gradients(model: FSDP, path: str) -> None:
     grads: dict[str, torch.Tensor] = {}
-    with FSDP.summon_full_params(model, with_grads=True, rank0_only=True):
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                grads[name] = param.grad.detach().float().cpu()
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(grads, path)
-    print(f"[reference] saved {len(grads)} gradient tensors to {path}")
+    for name, param in model.named_parameters():
+        if param.grad is None:
+            continue
+        grad = param.grad
+        if hasattr(grad, "redistribute"):
+            # DTensor: all-gather shards onto every rank, then take local copy
+            full_grad = grad.redistribute(placements=[Replicate()]).to_local()
+        else:
+            full_grad = grad
+        if rank == 0:
+            grads[name] = full_grad.detach().float().cpu()
+
+    if rank == 0:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(grads, path)
+        print(f"[reference] saved {len(grads)} gradient tensors to {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +143,8 @@ def train(
     save_grads: Optional[str],
     grad_step: int,
     config_path: Optional[str],
+    warmup: int = 5,
+    mode: str = "baseline",
 ) -> dict:
     dist.init_process_group("nccl")
     rank = dist.get_rank()
@@ -164,11 +157,46 @@ def train(
     train_cfg = TrainingConfig.from_json(cfg_path)
     model_args = _make_model_args(seq_len=train_cfg.seq_len)
 
-    # Build TorchTitan model and call its own init_weights for canonical initialization
+    # Build model directly on device with canonical TorchTitan initialization
     with torch.device(device):
         model = Transformer(model_args)
     model.init_weights()
-    model = wrap_fsdp(model, device)
+
+    # ── Float8 (must happen before FSDP2) ─────────────────────────────────
+    if mode == "fp8":
+        from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+        convert_to_float8_training(model, config=Float8LinearConfig())
+        if rank == 0:
+            print("[reference] applied Float8 linear conversion")
+
+    # ── FSDP2 device mesh (pure data-parallel, no TP/PP) ──────────────────
+    parallel_dims = ParallelDims(
+        dp_replicate=1,
+        dp_shard=world_size,
+        cp=1, tp=1, pp=1, ep=1, etp=1,
+        world_size=world_size,
+    )
+    parallel_dims.build_mesh()
+    dp_mesh = parallel_dims.get_mesh("fsdp")
+
+    # ── Selective activation checkpointing (every 2nd layer — TorchTitan default) ──
+    model_compile_enabled = mode in ("compile", "fp8")
+    ac_config = ACConfig(mode="selective", selective_ac_option="2")
+    apply_ac(model, ac_config, model_compile_enabled=model_compile_enabled)
+
+    # ── torch.compile per-TransformerBlock (before FSDP2) ─────────────────
+    if model_compile_enabled:
+        compile_config = CompileConfig(enable=True, components=["model"], backend="inductor")
+        apply_compile(model, compile_config)
+
+    # ── FSDP2 ─────────────────────────────────────────────────────────────
+    apply_fsdp(
+        model,
+        dp_mesh,
+        param_dtype=torch.bfloat16,
+        reduce_dtype=torch.float32,
+        pp_enabled=False,
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -197,9 +225,8 @@ def train(
 
         loss.backward()
 
-        # Save pre-optimizer gradients at the target step (rank 0 only, gathered via FSDP)
-        if save_grads and step == grad_step and rank == 0:
-            _save_gradients(model, save_grads)
+        if save_grads and step == grad_step:
+            _save_gradients(model, save_grads, rank)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.max_grad_norm)
         optimizer.step()
@@ -211,12 +238,13 @@ def train(
 
         if rank == 0 and step % 10 == 0:
             tps = tokens_per_step / elapsed
-            print(f"step {step:4d}  loss={loss.item():.4f}  tok/s={tps:,.0f}  step_ms={elapsed*1000:.1f}")
+            print(f"[{mode}] step {step:4d}  loss={loss.item():.4f}  tok/s={tps:,.0f}  step_ms={elapsed*1000:.1f}")
 
     dist.destroy_process_group()
 
-    mean_step = sum(step_times[5:]) / max(len(step_times[5:]), 1)
+    mean_step = sum(step_times[warmup:]) / max(len(step_times[warmup:]), 1)
     return {
+        "mode": mode,
         "tokens_per_sec": tokens_per_step / mean_step,
         "mean_step_ms": mean_step * 1000,
         "tokens_per_step": tokens_per_step,
@@ -228,20 +256,32 @@ def train(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="TorchTitan Llama 3.1 8B FSDP reference trainer")
-    parser.add_argument("--steps", type=int, default=20, help="Number of training steps")
+    parser = argparse.ArgumentParser(description="TorchTitan Llama 3.1 8B reference trainer")
+    parser.add_argument("--mode", choices=["baseline", "compile", "fp8"], default="baseline",
+                        help="Benchmark tier: baseline (FSDP2+BF16), compile (+torch.compile), fp8 (+Float8)")
+    parser.add_argument("--steps", type=int, default=35, help="Number of training steps")
+    parser.add_argument("--warmup", type=int, default=5,
+                        help="Steps to exclude from throughput average")
     parser.add_argument("--save-grads", type=str, default=None,
                         help="Path to save gradient tensors (.pt) for accuracy checking")
     parser.add_argument("--grad-step", type=int, default=10,
-                        help="Step at which to capture gradients (before optimizer.step)")
+                        help="Step at which to capture gradients")
+    parser.add_argument("--output-json", type=str, default=None,
+                        help="Path to write benchmark results JSON (rank 0 only)")
     parser.add_argument("--config", type=str, default=None, help="Path to config.json")
     args = parser.parse_args()
 
-    results = train(args.steps, args.save_grads, args.grad_step, args.config)
+    results = train(args.steps, args.save_grads, args.grad_step, args.config,
+                    args.warmup, args.mode)
+
     if int(os.environ.get("RANK", "0")) == 0:
-        print("\n--- Training complete ---")
+        print(f"\n--- [{args.mode}] complete ---")
         for k, v in results.items():
-            print(f"  {k}: {v:,.1f}")
+            print(f"  {k}: {v:,.1f}" if isinstance(v, float) else f"  {k}: {v}")
+        if args.output_json:
+            out = Path(args.output_json)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
