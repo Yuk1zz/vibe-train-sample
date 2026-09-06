@@ -58,11 +58,29 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _STATE_VERSION = 1
 
 
+def _nproc_from_env(default: int = 8) -> int:
+    """Count available GPUs: CUDA_VISIBLE_DEVICES first, then nvidia-smi, then default."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible:
+        return len([d for d in visible.split(",") if d.strip()])
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=gpu_name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            count = len([l for l in result.stdout.strip().splitlines() if l.strip()])
+            if count > 0:
+                return count
+    except Exception:
+        pass
+    return default
+
+
 def _run_reference_once(
     workspace: Path,
     lprint,
     *,
-    nproc: int = 8,
     grad_step: int = 10,
 ) -> tuple[Path | None, Path | None]:
     """Run TorchTitan reference at startup for all three benchmark tiers.
@@ -85,6 +103,7 @@ def _run_reference_once(
         lprint(f"[reference] reference script not found at {ref_script}, skipping")
         return None, None
 
+    nproc = _nproc_from_env()
     # (steps, warmup) per tier: compile/fp8 need extra warmup for JIT compilation
     tiers = [
         ("baseline", 35,  5),
