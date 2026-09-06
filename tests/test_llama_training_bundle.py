@@ -138,9 +138,9 @@ class TestReferenceStructure:
             "reference.py must call TorchTitan's model.init_weights() for canonical initialization"
         )
 
-    def test_uses_fsdp_summon_full_params(self, source):
-        assert "summon_full_params" in source, (
-            "gradient capture must use FSDP.summon_full_params to gather shards before saving"
+    def test_gathers_gradients_across_shards(self, source):
+        assert "redistribute" in source, (
+            "gradient capture must use DTensor.redistribute to all-gather FSDP2 shards before saving"
         )
 
 

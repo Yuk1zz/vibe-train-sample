@@ -32,18 +32,13 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-# TorchTitan model
-from torchtitan.models.llama3.model.model import Transformer
+# TorchTitan model (imported at top level so tests can stub these)
+from torchtitan.models.llama3.model.model import Transformer, TransformerBlock  # noqa: F401
 from torchtitan.models.llama3.model.args import TransformerModelArgs, RoPEScalingArgs
 
-# TorchTitan parallelization infrastructure
-from torchtitan.models.llama3.infra.parallelize import apply_fsdp, apply_compile
-from torchtitan.distributed import ParallelDims
-from torchtitan.distributed.activation_checkpoint import apply_ac
-from torchtitan.config.job_config import (
-    ActivationCheckpoint as ACConfig,
-    Compile as CompileConfig,
-)
+# TorchTitan parallelization infrastructure — imported lazily inside train() so
+# that make_batch / TrainingConfig / _make_model_args are importable in test
+# environments that only stub the model subpackage.
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +141,15 @@ def train(
     warmup: int = 5,
     mode: str = "baseline",
 ) -> dict:
+    # Lazy imports — only needed at training time, not at import time
+    from torchtitan.models.llama3.infra.parallelize import apply_fsdp, apply_compile
+    from torchtitan.distributed import ParallelDims
+    from torchtitan.distributed.activation_checkpoint import apply_ac
+    from torchtitan.config.job_config import (
+        ActivationCheckpoint as ACConfig,
+        Compile as CompileConfig,
+    )
+
     dist.init_process_group("nccl")
     rank = dist.get_rank()
     world_size = dist.get_world_size()
