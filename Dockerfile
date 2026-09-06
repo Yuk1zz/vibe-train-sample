@@ -57,6 +57,7 @@ RUN uv sync --frozen --no-dev --extra train
 #     --env-file .env \
 #     vibe-train --exp-name run-001
 
+ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV HF_HUB_DISABLE_XET_TRANSFER=1
 
