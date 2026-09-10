@@ -164,7 +164,8 @@ def train(
     # Build model directly on device with canonical TorchTitan initialization
     with torch.device(device):
         model = Transformer(model_args)
-    model.init_weights()
+    with torch.no_grad():
+        model.init_weights()
 
     # ── Float8 (must happen before FSDP2) ─────────────────────────────────
     if mode == "fp8":
