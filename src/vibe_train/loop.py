@@ -57,6 +57,9 @@ from vibe_serve.sandbox.run_environment import (
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _STATE_VERSION = 1
 
+# Keep in sync with grad_step() / grad_atol() / grad_rtol() in templates/_config.j2
+_GRAD_STEP = 1
+
 
 def _nproc_from_env(default: int = 8) -> int:
     """Count available GPUs: CUDA_VISIBLE_DEVICES first, then nvidia-smi, then default."""
@@ -81,7 +84,7 @@ def _run_reference_once(
     workspace: Path,
     lprint,
     *,
-    grad_step: int = 10,
+    grad_step: int = _GRAD_STEP,
 ) -> tuple[Path | None, Path | None]:
     """Run TorchTitan reference at startup for all three benchmark tiers.
 

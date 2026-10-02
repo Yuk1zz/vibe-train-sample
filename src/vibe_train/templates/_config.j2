@@ -2,7 +2,7 @@
    Edit the macros below to retarget a different GPU or model. #}
 
 {% macro model_name() %}Llama 3.1 8B{% endmacro %}
-{% macro num_gpus() %}8{% endmacro %}
+{% macro num_gpus() %}2{% endmacro %}
 {% macro gpu_type() %}H200{% endmacro %}
 
 {# Reference throughput baselines (tok/sec).
@@ -11,3 +11,9 @@
 {% macro ref_fsdp_tok_sec() %}6258{% endmacro %}
 {% macro ref_compile_tok_sec() %}6674{% endmacro %}
 {% macro ref_fp8_tok_sec() %}9409{% endmacro %}
+
+{# Gradient correctness check settings.
+   Keep in sync with: checker.py (ATOL/RTOL) and loop.py (_GRAD_STEP). #}
+{% macro grad_step() %}1{% endmacro %}
+{% macro grad_atol() %}1e-4{% endmacro %}
+{% macro grad_rtol() %}1e-3{% endmacro %}

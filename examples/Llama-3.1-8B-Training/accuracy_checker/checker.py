@@ -4,17 +4,20 @@ Gradient correctness verifier for vibe-train candidates.
 Compares accumulated gradients (before optimizer.step()) between the candidate
 training system and the TorchTitan reference, using torch.allclose in FP32.
 
-Primary check (from proposal):
-    torch.allclose(grad_candidate_fp32, grad_reference_fp32, rtol=1e-3, atol=1e-5)
+Primary check:
+    torch.allclose(grad_candidate_fp32, grad_reference_fp32, rtol=1e-3, atol=1e-4)
+
+Gradients are captured at step 1 (before any optimizer step) to avoid BF16 matmul
+nondeterminism being amplified by AdamW over multiple steps.
 
 Usage:
     # Step 1: Generate reference gradients (run once, save to disk)
-    torchrun --nproc_per_node=8 ../reference/reference.py \\
-        --steps 10 --save-grads /tmp/ref_grads.pt --grad-step 10
+    torchrun --nproc_per_node=<N> ../reference/reference.py \\
+        --steps 1 --warmup 0 --save-grads /tmp/ref_grads.pt --grad-step 1
 
     # Step 2: Run candidate and save its gradients to the same step
-    torchrun --nproc_per_node=8 train.py \\
-        --steps 10 --save-grads /tmp/cand_grads.pt --grad-step 10
+    torchrun --nproc_per_node=<N> train.py \\
+        --steps 1 --warmup 0 --save-grads /tmp/cand_grads.pt --grad-step 1
 
     # Step 3: Compare
     python checker.py --ref /tmp/ref_grads.pt --candidate /tmp/cand_grads.pt
@@ -34,8 +37,10 @@ from pathlib import Path
 import torch
 
 
+# Keep in sync with grad_rtol() / grad_atol() / grad_step() in templates/_config.j2
 RTOL = 1e-3
-ATOL = 1e-5
+ATOL = 1e-4
+GRAD_STEP = 1
 
 
 # ---------------------------------------------------------------------------

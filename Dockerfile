@@ -28,7 +28,7 @@ RUN groupadd -g $GID vibe && useradd -m -u $UID -g $GID vibe
 
 # ── Python deps (run as vibe so .venv is owned correctly — no chown -R) ────
 WORKDIR /app
-RUN chown vibe:vibe /app
+RUN chown vibe:vibe /app && mkdir -p /app/.torch_cache && chown vibe:vibe /app/.torch_cache
 
 # Copy manifests with correct ownership so uv can write the lockfile if needed.
 # README.md is required by setuptools to build the package metadata.
@@ -60,6 +60,7 @@ RUN uv sync --frozen --no-dev --extra train
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV HF_HUB_DISABLE_XET_TRANSFER=1
+ENV TORCH_HOME="/app/.torch_cache"
 
 ENTRYPOINT ["/app/.venv/bin/vibe-train"]
 CMD ["--help"]

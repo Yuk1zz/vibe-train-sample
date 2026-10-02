@@ -29,6 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 train = [
     "torchtitan>=0.2.2",
+    "torchao>=0.8.0",
 ]
 
 [project.scripts]

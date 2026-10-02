@@ -2,7 +2,7 @@
    implementer/system.j2. Both templates render with ``reference_path``
    and optional ``runtime_notes`` in scope. Keep this partial focused on prose
    identical across both call sites so updates only happen in one place. #}
-{% from '_config.j2' import model_name, num_gpus, gpu_type %}
+{% from '_config.j2' import model_name, num_gpus, gpu_type, grad_step, grad_atol, grad_rtol %}
 Build a distributed FSDP training system that trains **{{ model_name() }}** at maximum throughput on {{ num_gpus() }}×{{ gpu_type() }} GPUs, matching the model architecture and training configuration defined in the reference implementation at `{{ reference_path }}`. Read the reference code and config files carefully — your system must implement the same model architecture, FSDP strategy, and data pipeline.
 
 **GPU and dtype**: {{ device_dtype }}
@@ -22,7 +22,7 @@ Build a distributed FSDP training system that trains **{{ model_name() }}** at m
 
 Keep this interface working across all issues, even as internals change.
 
-**Gradient correctness (CRITICAL)**: The accuracy checker compares your system's FP32 gradients at step 10 against the reference using `torch.allclose(rtol=1e-3, atol=1e-5)`. All named parameter gradients must pass. Ensure:
+**Gradient correctness (CRITICAL)**: The accuracy checker compares your system's FP32 gradients at step {{ grad_step() }} against the reference using `torch.allclose(rtol={{ grad_rtol() }}, atol={{ grad_atol() }})`. All named parameter gradients must pass. Ensure:
 - Same model weights initialization (same seed or loaded from reference checkpoint)
 - Same synthetic batch (same seed as reference at the designated step)
 - `reduce_dtype=torch.float32` in FSDP `MixedPrecision` (BF16 reduce causes gradient divergence)

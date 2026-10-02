@@ -302,3 +302,58 @@ class TestMakeModelArgs:
         assert kw["low_freq_factor"] == pytest.approx(1.0)
         assert kw["high_freq_factor"] == pytest.approx(4.0)
         assert kw["original_max_position_embeddings"] == 8192
+
+
+# ---------------------------------------------------------------------------
+# Config sync: _config.j2 macros must match Python-side constants
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_TEMPLATES_DIR = _PROJECT_ROOT / "src" / "vibe_train" / "templates"
+_CHECKER_PY = _PROJECT_ROOT / "examples" / "Llama-3.1-8B-Training" / "accuracy_checker" / "checker.py"
+_LOOP_PY = _PROJECT_ROOT / "src" / "vibe_train" / "loop.py"
+
+
+class TestConfigSync:
+    """_config.j2 macros must stay in sync with Python-side constants.
+
+    When you change grad_step / grad_atol / grad_rtol in _config.j2, update
+    the matching constants in checker.py and loop.py too — these tests enforce it.
+    """
+
+    @pytest.fixture(scope="class")
+    def config_values(self):
+        from jinja2 import Environment, FileSystemLoader
+        env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
+        tpl = env.from_string(
+            "{% from '_config.j2' import grad_step, grad_atol, grad_rtol %}"
+            "{{ grad_step() }}|{{ grad_atol() }}|{{ grad_rtol() }}"
+        )
+        step_str, atol_str, rtol_str = tpl.render().split("|")
+        return {
+            "grad_step": int(step_str),
+            "grad_atol": float(atol_str),
+            "grad_rtol": float(rtol_str),
+        }
+
+    def _extract_constant(self, path: Path, name: str):
+        """Extract a module-level constant from Python source via AST."""
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == name:
+                        return ast.literal_eval(node.value)
+        raise KeyError(f"{name!r} not found in {path}")
+
+    def test_grad_step_loop(self, config_values):
+        assert self._extract_constant(_LOOP_PY, "_GRAD_STEP") == config_values["grad_step"]
+
+    def test_grad_step_checker(self, config_values):
+        assert self._extract_constant(_CHECKER_PY, "GRAD_STEP") == config_values["grad_step"]
+
+    def test_grad_atol_checker(self, config_values):
+        assert self._extract_constant(_CHECKER_PY, "ATOL") == pytest.approx(config_values["grad_atol"])
+
+    def test_grad_rtol_checker(self, config_values):
+        assert self._extract_constant(_CHECKER_PY, "RTOL") == pytest.approx(config_values["grad_rtol"])
